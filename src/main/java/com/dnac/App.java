@@ -3,6 +3,7 @@ package com.dnac;
 import java.io.IOException;
 import java.util.InputMismatchException;
 import java.util.List;
+import java.util.Optional;
 import java.util.Properties;
 import java.util.Scanner;
 
@@ -31,6 +32,8 @@ public class App {
             System.out.println("2. List devices");
             System.out.println("3. Make a DNAC GET call (enter path)");
             System.out.println("4. (Optional) Add device (requires admin role)");
+            System.out.println("5. Run 'show version' & 'show ip int brief' on platformId=C9500-40X and print output");
+            System.out.println("6. List Sites");
 
             try {
                 choice = input.nextInt();
@@ -57,6 +60,12 @@ public class App {
                         break;
                     case 4:
                         addDeviceInteractive(input);
+                        break;
+                    case 5:
+                        runPythonParityDemo();
+                        break;
+                    case 6:
+                        listSites();
                         break;
                     default:
                         System.out.println("Invalid choice");
@@ -99,12 +108,40 @@ public class App {
                 System.out.println("  ID: " + nullSafe(d.id));
                 System.out.println("  Mgmt IP: " + nullSafe(d.managementIpAddress));
                 System.out.println("  Type: " + nullSafe(d.type));
+                System.out.println("  PlatformId: " + nullSafe(d.platformId));
                 System.out.println("  SW: " + nullSafe(d.softwareVersion));
                 System.out.println();
             }
             System.out.println("Total: " + devices.size());
         } catch (Exception e) {
             System.out.println("Error listing devices");
+            System.out.println(e.getMessage());
+        }
+    }
+
+    private static void listSites() {
+        try {
+            var sites = Dnac.getSites();
+            if (sites.isEmpty()) {
+                System.out.println("No sites returned.");
+                return;
+            }
+            for (Dnac.Site s : sites) {
+                System.out.println("Site: " + nullSafe(s.name));
+                System.out.println("  ID: " + nullSafe(s.id));
+                System.out.println("  Tenant: " + nullSafe(s.instanceTenantId));
+                System.out.println("  Hierarchy: " + nullSafe(s.siteHierarchy));
+                System.out.println("  NameHierarchy: " + nullSafe(s.siteNameHierarchy));
+
+                if (s.additionalInfo != null && !s.additionalInfo.isEmpty()) {
+                    System.out.println("  AdditionalInfo: " + s.additionalInfo);
+                } else {
+                    System.out.println("  AdditionalInfo: []");
+                }
+                System.out.println();
+            }
+        } catch (Exception e) {
+            System.out.println("Error listing sites");
             System.out.println(e.getMessage());
         }
     }
@@ -140,6 +177,23 @@ public class App {
 
         } catch (Exception e) {
             System.out.println("Error adding device");
+            System.out.println(e.getMessage());
+        }
+    }
+
+    /** Mirrors your Python main(): filter by platformId, run commands, print 'show ip int brief'. */
+    private static void runPythonParityDemo() {
+        String platformId = "C9500-40X";
+        try {
+            Optional<String> output = Dnac.runShowIpIntBriefOnPlatform(platformId);
+            if (output.isEmpty()) {
+                System.out.println("No output received (no devices or no SUCCESS results).");
+            } else {
+                System.out.println("\n---- 'show ip int brief' Output ----\n");
+                System.out.println(output.get());
+            }
+        } catch (Exception e) {
+            System.out.println("Error running command runner demo");
             System.out.println(e.getMessage());
         }
     }
