@@ -2,18 +2,13 @@ package com.dnac;
 
 import com.dnac.sdk.DnacClient;
 import com.dnac.sdk.DnacClientImpl;
-import com.dnac.sdk.api.CommandRunnerApi;
-import com.dnac.sdk.api.DevicesApi;
-import com.dnac.sdk.api.SitesApi;
-import com.dnac.sdk.api.TemplatesApi;
+import com.dnac.sdk.api.*;
 import com.dnac.sdk.config.DnacConfig;
 import com.dnac.sdk.model.common.CountResponse;
 import com.dnac.sdk.model.device.AddDeviceRequest;
 import com.dnac.sdk.model.device.Device;
 import com.dnac.sdk.model.site.Site;
 import com.dnac.sdk.model.site.SiteListResponse;
-import com.dnac.sdk.model.template.Project;
-import com.dnac.sdk.model.template.Template;
 
 import java.io.IOException;
 import java.net.URI;
@@ -48,8 +43,8 @@ public class App {
             SitesApi sites = client.sites();
             TemplatesApi templates = client.templates();
             CommandRunnerApi cmd = client.commandRunner();
-            AuthApi auth = new AuthApi(cfg, client);       // tiny helper
-            MiscApi misc = new MiscApi(cfg, client);       // tiny helper
+            AuthApi auth = client.auth();
+            MiscApi misc = client.misc();
 
             Scanner input = new Scanner(System.in);
             int choice = -1;
@@ -127,7 +122,7 @@ public class App {
 
     private static void displayAccessToken(AuthApi auth) {
         try {
-            final String token = auth.currentToken();
+            final String token = auth.getToken();
             System.out.println("Access token: " + token);
         } catch (Exception e) {
             System.out.println("Error getting token");
