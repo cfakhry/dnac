@@ -113,11 +113,87 @@ public class Dnac {
         return resp.response == null ? List.of() : resp.response;
     }
 
+    public static Device getDeviceById(String id) throws Exception {
+        String json = getRaw("/dna/intent/api/v1/network-device/"+id);
+        DeviceResponse resp = mapper.readValue(json, DeviceResponse.class);
+        return resp.response;
+    }
+
+    public static Device getDeviceBySerial(String serialNumber) throws Exception {
+        String json = getRaw("/dna/intent/api/v1/network-device/serial-number/"+serialNumber);
+        DeviceResponse resp = mapper.readValue(json, DeviceResponse.class);
+        return resp.response;
+    }
+
+    public static int getDeviceCount() throws Exception {
+        String json = getRaw("/dna/intent/api/v1/network-device/count");
+
+        ObjectMapper mapper = new ObjectMapper();
+        JsonNode root = mapper.readTree(json);
+
+        JsonNode resp = root.get("response");
+        if (resp == null || !resp.isNumber()) {
+            throw new IllegalStateException("Unexpected payload: " + json);
+        }
+        return resp.asInt();
+    }
+
     /** Get Sites */
     public static List<Site> getSites() throws Exception{
         String json = getRaw("/dna/intent/api/v1/site");
         SiteListResponse resp = mapper.readValue(json, SiteListResponse.class);
         return resp.response == null ? List.of() : resp.response;
+    }
+
+    public static List<Project> listProjects() throws Exception {
+        String json = getRaw("/dna/intent/api/v1/template-programmer/project");
+        return mapper.readValue(
+                json,
+                mapper.getTypeFactory().constructCollectionType(List.class, Project.class)
+        );
+    }
+
+    /**
+     * Create a Template Programmer project.
+     * POST /dna/intent/api/v1/template-programmer/project
+     */
+    public static Project createProject(String name, String description, List<CreateProjectRequest.Tag> tags) throws Exception {
+        if (name == null || name.isBlank()) throw new Exception("Project name is required");
+
+        String token = getToken();
+        String url = baseUrl + "/dna/intent/api/v1/template-programmer/project";
+
+        CreateProjectRequest body = new CreateProjectRequest();
+        body.name = name;
+        body.description = (description == null ? "" : description);
+        body.tags = (tags == null ? List.of() : tags);
+
+        String payload = mapper.writeValueAsString(body);
+
+        HttpRequest req = HttpRequest.newBuilder()
+                .uri(URI.create(url))
+                .timeout(Duration.ofSeconds(30))
+                .header("Accept", "application/json")
+                .header("Content-Type", "application/json")
+                .header("X-Auth-Token", token)
+                .POST(HttpRequest.BodyPublishers.ofString(payload))
+                .build();
+
+        HttpResponse<String> res = send(req);
+        if (res.statusCode() / 100 != 2) {
+            throw new Exception("Create Project failed: HTTP " + res.statusCode() + " - " + res.body());
+        }
+
+        // Some versions return { "response": { ...project... } }, others return the project directly.
+        String bodyStr = res.body();
+        try {
+            ProjectEnvelope env = mapper.readValue(bodyStr, ProjectEnvelope.class);
+            if (env.response != null) return env.response;
+        } catch (Exception ignore) { /* fall through to direct mapping */ }
+
+        // Try direct mapping
+        Project p = mapper.readValue(bodyStr, Project.class);
+        return p;
     }
 
     /** Get device IDs filtered by platformId (e.g., "C9500-40X"), mirroring the Python query. */
@@ -360,6 +436,11 @@ public class Dnac {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
+    static class DeviceResponse {
+        public Device response;
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
     static class SiteListResponse {
         public List<Site> response;
         public String version;
@@ -384,6 +465,7 @@ public class Dnac {
         public String managementIpAddress;
         public String type;
         public String softwareVersion;
+        public String serialNumber;
         public String platformId; // useful when filtering
     }
 
@@ -443,5 +525,52 @@ public class Dnac {
         public String lastUpdate;
         public String version;
         public String failureReason;
+    }
+
+    /** Minimal request body for Create Project. */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class CreateProjectRequest {
+        public String name;            // required
+        public String description;     // optional
+        public List<Tag> tags;         // optional
+
+        @JsonIgnoreProperties(ignoreUnknown = true)
+        public static class Tag {
+            public String name;
+            public String id;          // optional
+        }
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class Project {
+        public String id;
+        public String name;
+        public String description;
+        public Long   lastUpdateTime;
+        public Boolean isDeletable;
+        public List<Template> templates;
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class Template {
+        public String id;
+        public String name;
+        public String language;
+        public Boolean composite;
+        public Boolean customParamsOrder;
+        public Long lastUpdateTime;
+        public Long latestVersionTime;
+        public String projectName;
+        public String projectId;
+        public Integer noOfConflicts;
+        public Boolean projectAssociated;
+        public Boolean documentDatabase;
+    }
+
+    /** Some deployments return an envelope with "response"; others return the object directly. */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    static class ProjectEnvelope {
+        public Project response;   // often present
+        public String  version;    // optional
     }
 }

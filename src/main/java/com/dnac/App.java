@@ -1,6 +1,23 @@
 package com.dnac;
 
+import com.dnac.sdk.DnacClient;
+import com.dnac.sdk.DnacClientImpl;
+import com.dnac.sdk.api.CommandRunnerApi;
+import com.dnac.sdk.api.DevicesApi;
+import com.dnac.sdk.api.SitesApi;
+import com.dnac.sdk.api.TemplatesApi;
+import com.dnac.sdk.config.DnacConfig;
+import com.dnac.sdk.model.common.CountResponse;
+import com.dnac.sdk.model.device.AddDeviceRequest;
+import com.dnac.sdk.model.device.Device;
+import com.dnac.sdk.model.site.Site;
+import com.dnac.sdk.model.site.SiteListResponse;
+import com.dnac.sdk.model.template.Project;
+import com.dnac.sdk.model.template.Template;
+
 import java.io.IOException;
+import java.net.URI;
+import java.time.Duration;
 import java.util.InputMismatchException;
 import java.util.List;
 import java.util.Optional;
@@ -8,6 +25,7 @@ import java.util.Properties;
 import java.util.Scanner;
 
 public class App {
+
     public static void main(String[] args) {
         System.out.println("Java App-Only Cisco DNAC Tutorial\n");
 
@@ -20,75 +38,96 @@ public class App {
             return;
         }
 
-        initializeDnac(props);
+        // Build config from properties
+        DnacConfig cfg = buildConfig(props);
 
-        Scanner input = new Scanner(System.in);
-        int choice = -1;
+        try (DnacClient client = new DnacClientImpl(cfg)) {
 
-        while (choice != 0) {
-            System.out.println("\nPlease choose one of the following options:");
-            System.out.println("0. Exit");
-            System.out.println("1. Display access token");
-            System.out.println("2. List devices");
-            System.out.println("3. Make a DNAC GET call (enter path)");
-            System.out.println("4. (Optional) Add device (requires admin role)");
-            System.out.println("5. Run 'show version' & 'show ip int brief' on platformId=C9500-40X and print output");
-            System.out.println("6. List Sites");
+            // API singletons
+            DevicesApi devices = client.devices();
+            SitesApi sites = client.sites();
+            TemplatesApi templates = client.templates();
+            CommandRunnerApi cmd = client.commandRunner();
+            AuthApi auth = new AuthApi(cfg, client);       // tiny helper
+            MiscApi misc = new MiscApi(cfg, client);       // tiny helper
 
-            try {
-                choice = input.nextInt();
-            } catch (InputMismatchException ex) {
-                // skip non-integer
-            }
-            input.nextLine();
+            Scanner input = new Scanner(System.in);
+            int choice = -1;
 
-            try {
-                switch (choice) {
-                    case 0:
-                        System.out.println("Goodbye...");
-                        break;
-                    case 1:
-                        displayAccessToken();
-                        break;
-                    case 2:
-                        listDevices();
-                        break;
-                    case 3:
-                        System.out.print("Enter DNAC GET path (e.g. /dna/intent/api/v1/network-device-count): ");
-                        String path = input.nextLine().trim();
-                        makeDnacGetCall(path);
-                        break;
-                    case 4:
-                        addDeviceInteractive(input);
-                        break;
-                    case 5:
-                        runPythonParityDemo();
-                        break;
-                    case 6:
-                        listSites();
-                        break;
-                    default:
-                        System.out.println("Invalid choice");
+            while (choice != 0) {
+                System.out.println("\nPlease choose one of the following options:");
+                System.out.println("0. Exit");
+                System.out.println("1. Display access token");
+                System.out.println("2. List devices");
+                System.out.println("3. Make a DNAC GET call (enter path)");
+                System.out.println("4. (Optional) Add device (requires admin role)");
+                System.out.println("5. Run 'show version' & 'show ip int brief' on platformId=C9500-40X and print output");
+                System.out.println("6. List Sites");
+                System.out.println("7. Create Project");
+                System.out.println("8. List Projects");
+                System.out.println("9. List Device by ID");
+                System.out.println("10. List Device by serial number");
+                System.out.println("11. Devices count");
+
+                try {
+                    choice = input.nextInt();
+                } catch (InputMismatchException ex) {
+                    // skip non-integer
                 }
-            } catch (Exception e) {
-                System.out.println("Error: " + e.getMessage());
-            }
-        }
-        input.close();
-    }
+                input.nextLine();
 
-    private static void initializeDnac(Properties properties) {
-        try {
-            Dnac.initialize(properties);
+                try {
+                    switch (choice) {
+                        case 0 -> System.out.println("Goodbye...");
+                        case 1 -> displayAccessToken(auth);
+                        case 2 -> listDevices(devices);
+                        case 3 -> {
+                            System.out.print("Enter DNAC GET path (e.g. /dna/intent/api/v1/network-device/count): ");
+                            String path = input.nextLine().trim();
+                            makeDnacGetCall(misc, path);
+                        }
+                        case 4 -> addDeviceInteractive(input, devices, props);
+                        case 5 -> runPythonParityDemo(cmd, devices);
+                        case 6 -> listSites(sites);
+                        //case 7 -> createProjectInteractive(input, templates);
+                        //case 8 -> listProjects(templates);
+                        case 9 -> listDeviceById(devices);
+                        case 10 -> listDeviceBySerialNumber(devices);
+                        case 11 -> devicesCount(misc);
+                        default -> System.out.println("Invalid choice");
+                    }
+                } catch (Exception e) {
+                    System.out.println("Error: " + e.getMessage());
+                }
+            }
+            input.close();
         } catch (Exception e) {
-            System.out.println("Error initializing DNAC");
+            System.out.println("Fatal error initializing client");
             System.out.println(e.getMessage());
         }
     }
 
-    private static void displayAccessToken() {
+    private static DnacConfig buildConfig(Properties p) {
+        String host = trimTrailingSlash(required(p, "dnac.host"));
+        String username = required(p, "dnac.username");
+        String password = required(p, "dnac.password");
+        boolean insecure = Boolean.parseBoolean(p.getProperty("dnac.insecure", "false"));
+
+        return new DnacConfig(
+                URI.create(host),
+                username,
+                password,
+                insecure,
+                Duration.ofSeconds(15),   // connect timeout
+                Duration.ofSeconds(30)    // request timeout
+        );
+    }
+
+    // ---- Menu handlers (now calling the new APIs) ----
+
+    private static void displayAccessToken(AuthApi auth) {
         try {
-            final String token = Dnac.getToken();
+            final String token = auth.currentToken();
             System.out.println("Access token: " + token);
         } catch (Exception e) {
             System.out.println("Error getting token");
@@ -96,48 +135,79 @@ public class App {
         }
     }
 
-    private static void listDevices() {
+    private static void listDevices(DevicesApi devices) {
         try {
-            List<Dnac.Device> devices = Dnac.getDevices();
-            if (devices.isEmpty()) {
+            List<Device> list = devices.listAll();
+            if (list.isEmpty()) {
                 System.out.println("No devices returned.");
                 return;
             }
-            for (Dnac.Device d : devices) {
-                System.out.println("Device: " + nullSafe(d.hostname));
-                System.out.println("  ID: " + nullSafe(d.id));
-                System.out.println("  Mgmt IP: " + nullSafe(d.managementIpAddress));
-                System.out.println("  Type: " + nullSafe(d.type));
-                System.out.println("  PlatformId: " + nullSafe(d.platformId));
-                System.out.println("  SW: " + nullSafe(d.softwareVersion));
-                System.out.println();
+            for (Device d : list) {
+                printDevice(d);
             }
-            System.out.println("Total: " + devices.size());
+            System.out.println("Total: " + list.size());
         } catch (Exception e) {
             System.out.println("Error listing devices");
             System.out.println(e.getMessage());
         }
     }
 
-    private static void listSites() {
+    private static void listDeviceById(DevicesApi devices) {
+        final String id = "d145ac01-2409-46cf-86e8-8b7703c0598a";
         try {
-            var sites = Dnac.getSites();
-            if (sites.isEmpty()) {
+            Device device = devices.getById(id);
+            if (device == null) {
+                System.out.println("Device not found");
+                return;
+            }
+            printDevice(device);
+        } catch (Exception e) {
+            System.out.println("Error fetching device by id.");
+            System.out.println(e.getMessage());
+        }
+    }
+
+    private static void listDeviceBySerialNumber(DevicesApi devices) {
+        final String serialNumber = "CML12345ABC";
+        try {
+            Device device = devices.getBySerial(serialNumber);
+            if (device == null) {
+                System.out.println("Device not found");
+                return;
+            }
+            printDevice(device);
+        } catch (Exception e) {
+            System.out.println("Error fetching device by serial number.");
+            System.out.println(e.getMessage());
+        }
+    }
+
+    private static void devicesCount(MiscApi misc) {
+        try {
+            // Uses a tiny CountResponse DTO instead of JsonNode parsing
+            CountResponse count = misc.getCount("/dna/intent/api/v1/network-device/count");
+            System.out.println("Devices count: " + count.response);
+        } catch (Exception e) {
+            System.out.println("Error getting device count");
+            System.out.println(e.getMessage());
+        }
+    }
+
+    private static void listSites(SitesApi sites) {
+        try {
+            SiteListResponse resp = sites.list();
+            List<Site> list = (resp == null || resp.response == null) ? List.of() : resp.response;
+            if (list.isEmpty()) {
                 System.out.println("No sites returned.");
                 return;
             }
-            for (Dnac.Site s : sites) {
+            for (Site s : list) {
                 System.out.println("Site: " + nullSafe(s.name));
                 System.out.println("  ID: " + nullSafe(s.id));
                 System.out.println("  Tenant: " + nullSafe(s.instanceTenantId));
                 System.out.println("  Hierarchy: " + nullSafe(s.siteHierarchy));
                 System.out.println("  NameHierarchy: " + nullSafe(s.siteNameHierarchy));
-
-                if (s.additionalInfo != null && !s.additionalInfo.isEmpty()) {
-                    System.out.println("  AdditionalInfo: " + s.additionalInfo);
-                } else {
-                    System.out.println("  AdditionalInfo: []");
-                }
+                System.out.println("  AdditionalInfo: " + (s.additionalInfo == null ? "[]" : s.additionalInfo));
                 System.out.println();
             }
         } catch (Exception e) {
@@ -146,9 +216,9 @@ public class App {
         }
     }
 
-    private static void makeDnacGetCall(String path) {
+    private static void makeDnacGetCall(MiscApi misc, String path) {
         try {
-            String json = Dnac.getRaw(path);
+            String json = misc.getRaw(path);
             System.out.println("Response JSON:\n" + json);
         } catch (Exception e) {
             System.out.println("Error making DNAC GET call");
@@ -156,22 +226,23 @@ public class App {
         }
     }
 
-    private static void addDeviceInteractive(Scanner input) {
+    private static void addDeviceInteractive(Scanner input, DevicesApi devices, Properties props) {
         try {
             System.out.println("Enter device IP (e.g. 10.10.20.80): ");
             String ip = input.nextLine().trim();
 
-            Dnac.AddDeviceRequest req = new Dnac.AddDeviceRequest();
-            req.ipAddress = new String[] { ip };
+            AddDeviceRequest req = new AddDeviceRequest();
+            req.ipAddress = new String[]{ ip };
             req.snmpVersion = "v2";
             req.snmpROCommunity = "public";
             req.snmpRWCommunity = "private";
             req.cliTransport = "ssh";
-            req.userName = Dnac.username(); // reuse creds if desired
-            req.password = Dnac.password();
-            req.enablePassword = Dnac.password();
+            // reuse creds from properties
+            req.userName = props.getProperty("dnac.username");
+            req.password = props.getProperty("dnac.password");
+            req.enablePassword = props.getProperty("dnac.password");
 
-            String result = Dnac.addDeviceRaw(req);
+            String result = devices.addDeviceRaw(req);  // small addition in DevicesApi
             System.out.println("Add device response:\n" + result);
             System.out.println("(Note: On Always-On sandbox, this likely fails due to read-only role.)");
 
@@ -182,10 +253,10 @@ public class App {
     }
 
     /** Mirrors your Python main(): filter by platformId, run commands, print 'show ip int brief'. */
-    private static void runPythonParityDemo() {
+    private static void runPythonParityDemo(CommandRunnerApi cmd, DevicesApi devices) {
         String platformId = "C9500-40X";
         try {
-            Optional<String> output = Dnac.runShowIpIntBriefOnPlatform(platformId);
+            Optional<String> output = cmd.runShowIpIntBriefOnPlatform(platformId, devices);
             if (output.isEmpty()) {
                 System.out.println("No output received (no devices or no SUCCESS results).");
             } else {
@@ -198,5 +269,28 @@ public class App {
         }
     }
 
+    private static void printDevice(Device device) {
+        System.out.println("Device: " + nullSafe(device.hostname));
+        System.out.println("  ID: " + nullSafe(device.id));
+        System.out.println("  Mgmt IP: " + nullSafe(device.managementIpAddress));
+        System.out.println("  Type: " + nullSafe(device.type));
+        System.out.println("  PlatformId: " + nullSafe(device.platformId));
+        System.out.println("  SW: " + nullSafe(device.softwareVersion));
+        System.out.println("  Serial Number: " + nullSafe(device.serialNumber));
+        System.out.println();
+    }
+
     private static String nullSafe(Object o) { return o == null ? "" : o.toString(); }
+
+    private static String required(Properties p, String k) {
+        String v = p.getProperty(k);
+        if (v == null || v.isBlank()) {
+            throw new IllegalArgumentException("Missing property: " + k);
+        }
+        return v.trim();
+    }
+
+    private static String trimTrailingSlash(String s) {
+        return (s != null && s.endsWith("/")) ? s.substring(0, s.length() - 1) : s;
+    }
 }
